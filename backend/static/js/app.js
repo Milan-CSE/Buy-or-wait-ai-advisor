@@ -43,6 +43,54 @@ function showAlert(message, type = 'info', timeout = 5000) {
   }
 }
 
+// Helper: Currency Formatting
+function formatCurrency(amount, currency = 'USD') {
+  if (amount === null || amount === undefined || isNaN(Number(amount))) {
+    return '0.00';
+  }
+  const num = Number(amount);
+  const curr = (currency || 'USD').toUpperCase().trim();
+
+  // Explicit mappings for common currencies
+  if (curr === 'INR') {
+    try {
+      return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+      }).format(num);
+    } catch (_) {
+      return `₹${num.toFixed(2)}`;
+    }
+  }
+
+  if (curr === 'USD') {
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+      }).format(num);
+    } catch (_) {
+      return `$${num.toFixed(2)}`;
+    }
+  }
+
+  // Dynamic formatting for all other ISO currencies with graceful fallback
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: curr,
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+    }).format(num);
+  } catch (_) {
+    return `${curr} ${num.toFixed(2)}`;
+  }
+}
+
 function hideAlert() {
   const alertEl = document.getElementById('globalAlert');
   if (alertEl) alertEl.style.display = 'none';
@@ -238,7 +286,12 @@ async function handleLogout() {
 async function loadProfile() {
   try {
     const prof = await apiRequest('/profile');
-    document.getElementById('profHomeCurrency').value = prof.home_currency || 'USD';
+    const homeCurr = prof.home_currency || 'USD';
+    document.getElementById('profHomeCurrency').value = homeCurr;
+    const evalCurrEl = document.getElementById('evalCurrency');
+    if (evalCurrEl && (!evalCurrEl.value || evalCurrEl.value === 'USD')) {
+      evalCurrEl.value = homeCurr;
+    }
     document.getElementById('profBalance').value = prof.current_available_balance ?? '';
     document.getElementById('profMinKeep').value = prof.minimum_balance_to_keep ?? '';
     document.getElementById('profProtected').value = (prof.protected_categories || []).join(', ');
@@ -404,7 +457,7 @@ async function handleEvaluate(e) {
       body: JSON.stringify(payload)
     });
 
-    renderEvaluationResult(res);
+    renderEvaluationResult(res, payload.currency, payload.requested_amount);
     showAlert('Evaluation completed successfully!', 'success');
   } catch (err) {
     if (err.data && err.data.code === 'DATA_INSUFFICIENT') {
@@ -418,10 +471,21 @@ async function handleEvaluate(e) {
   }
 }
 
-function renderEvaluationResult(res) {
+function renderEvaluationResult(res, requestedCurrency = null, requestedAmount = null) {
   const container = document.getElementById('evaluateResultContainer');
   const verdictClass = `verdict-${res.verdict}`;
   const riskClass = `risk-${res.risk_tier || 'LOW_RISK'}`;
+
+  // Dynamically resolve currency from supporting_facts, response, input payload, or profile
+  const currency = (
+    (res.grounded_explanation && res.grounded_explanation.supporting_facts && res.grounded_explanation.supporting_facts.currency) ||
+    res.currency ||
+    requestedCurrency ||
+    (document.getElementById('evalCurrency') ? document.getElementById('evalCurrency').value : null) ||
+    'USD'
+  ).toUpperCase().trim();
+
+  const formattedSafeAmount = formatCurrency(res.amount_safe_to_pay, currency);
 
   let expHeadline = '';
   let expText = res.decision_explanation || '';
@@ -434,9 +498,37 @@ function renderEvaluationResult(res) {
     expAction = res.grounded_explanation.suggested_action || '';
     if (res.grounded_explanation.supporting_facts) {
       const facts = res.grounded_explanation.supporting_facts;
-      expFacts = Object.entries(facts).map(([k, v]) => `<li><strong>${k.replace(/_/g, ' ')}:</strong> ${v}</li>`).join('');
+      expFacts = Object.entries(facts).map(([k, v]) => {
+        let displayVal = v;
+        // Format monetary amounts if key implies monetary value
+        if (['requested_amount', 'safe_amount', 'headroom_p50', 'headroom_p90', 'safe_amount_p50', 'safe_amount_p90', 'reserve_required'].includes(k) && v !== null && v !== undefined) {
+          displayVal = formatCurrency(v, currency);
+        }
+        return `<li><strong>${k.replace(/_/g, ' ')}:</strong> ${displayVal}</li>`;
+      }).join('');
     }
   }
+
+  // Risk metrics formatted with dynamic currency
+  let riskDetailsHtml = '';
+  if (res.risk_assessment) {
+    const p90Buffer = formatCurrency(res.risk_assessment.headroom_p90 || 0, currency);
+    const p50Headroom = res.risk_assessment.headroom_p50 !== undefined ? formatCurrency(res.risk_assessment.headroom_p50, currency) : null;
+    riskDetailsHtml = `
+      <div style="margin-top: 1rem; padding: 0.85rem; background: var(--bg-main); border-radius: var(--radius); font-size: 0.8rem; line-height: 1.6;">
+        <div><strong>Risk Engine Stress Summary:</strong> ${res.risk_assessment.stress_summary || 'Standard'}</div>
+        <div><strong>P90 Headroom Buffer:</strong> ${p90Buffer}</div>
+        ${p50Headroom ? `<div><strong>Headroom P50:</strong> ${p50Headroom}</div>` : ''}
+        ${res.risk_assessment.safe_amount_p90 !== undefined ? `<div><strong>Safe Amount (P90):</strong> ${formatCurrency(res.risk_assessment.safe_amount_p90, currency)}</div>` : ''}
+      </div>
+    `;
+  }
+
+  const requestedAmountFormatted = requestedAmount !== null && requestedAmount !== undefined
+    ? formatCurrency(requestedAmount, currency)
+    : (res.grounded_explanation && res.grounded_explanation.supporting_facts && res.grounded_explanation.supporting_facts.requested_amount
+      ? formatCurrency(res.grounded_explanation.supporting_facts.requested_amount, currency)
+      : null);
 
   container.innerHTML = `
     <div class="decision-card">
@@ -451,11 +543,13 @@ function renderEvaluationResult(res) {
       <div class="grid-2" style="margin-bottom: 1.25rem;">
         <div class="stat-box">
           <div class="stat-label">Amount Safe to Pay Now</div>
-          <div class="stat-value" style="color: var(--primary);">$${parseFloat(res.amount_safe_to_pay).toFixed(2)}</div>
+          <div class="stat-value" style="color: var(--primary);">${formattedSafeAmount}</div>
+          ${requestedAmountFormatted ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">Requested: <strong>${requestedAmountFormatted}</strong></div>` : ''}
         </div>
         <div class="stat-box">
           <div class="stat-label">Recommended Method</div>
           <div class="stat-value" style="font-size: 1.15rem;">${(res.recommended_payment_method || 'none').replace(/_/g, ' ')}</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">Currency: <strong>${currency}</strong></div>
         </div>
       </div>
 
@@ -478,12 +572,7 @@ function renderEvaluationResult(res) {
         ${expFacts ? `<ul style="font-size: 0.8rem; color: var(--text-muted); margin-left: 1.2rem; margin-top: 0.5rem;">${expFacts}</ul>` : ''}
       </div>
 
-      ${res.risk_assessment ? `
-        <div style="margin-top: 1rem; padding: 0.85rem; background: var(--bg-main); border-radius: var(--radius); font-size: 0.8rem;">
-          <strong>Risk Engine Stress Summary:</strong> ${res.risk_assessment.stress_summary || 'Standard'}<br/>
-          <strong>P90 Headroom Buffer:</strong> $${parseFloat(res.risk_assessment.headroom_p90 || 0).toFixed(2)}
-        </div>
-      ` : ''}
+      ${riskDetailsHtml}
     </div>
   `;
 }
@@ -521,17 +610,25 @@ async function loadDecisionHistory() {
       return;
     }
 
-    tbody.innerHTML = res.items.map(d => `
-      <tr>
-        <td>${(d.created_at || '').substring(0, 10)}</td>
-        <td><span class="verdict-badge verdict-${d.verdict}" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${d.verdict}</span></td>
-        <td>${(d.affordability_status || '').replace(/_/g, ' ')}</td>
-        <td><strong>$${parseFloat(d.amount_safe_to_pay).toFixed(2)}</strong></td>
-        <td>${(d.recommended_payment_method || 'none').replace(/_/g, ' ')}</td>
-        <td><span class="risk-tag risk-${d.risk_tier || 'LOW_RISK'}">${d.risk_tier || 'LOW'}</span></td>
-        <td style="max-width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${d.decision_explanation}">${d.decision_explanation}</td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = res.items.map(d => {
+      const historyCurr = (
+        (d.grounded_explanation && d.grounded_explanation.supporting_facts && d.grounded_explanation.supporting_facts.currency) ||
+        (document.getElementById('profHomeCurrency') ? document.getElementById('profHomeCurrency').value : null) ||
+        'USD'
+      );
+      const safeAmountFormatted = formatCurrency(d.amount_safe_to_pay, historyCurr);
+      return `
+        <tr>
+          <td>${(d.created_at || '').substring(0, 10)}</td>
+          <td><span class="verdict-badge verdict-${d.verdict}" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">${d.verdict}</span></td>
+          <td>${(d.affordability_status || '').replace(/_/g, ' ')}</td>
+          <td><strong>${safeAmountFormatted}</strong></td>
+          <td>${(d.recommended_payment_method || 'none').replace(/_/g, ' ')}</td>
+          <td><span class="risk-tag risk-${d.risk_tier || 'LOW_RISK'}">${d.risk_tier || 'LOW'}</span></td>
+          <td style="max-width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${d.decision_explanation}">${d.decision_explanation}</td>
+        </tr>
+      `;
+    }).join('');
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--danger);">Failed to load history: ${err.message}</td></tr>`;
   }
