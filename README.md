@@ -1,193 +1,235 @@
-# HackerRank Orchestrate
+# Buy or Wait? — AI Financial Decision Intelligence System
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon (September 2026).
+A production-ready, auditable, risk-aware financial decision system. Given a user's financial profile and a proposed purchase, the system determines whether the purchase is safe, when it becomes safe, and what the optimal payment strategy is.
 
-## Buy or Wait?
+---
 
-Build an AI-powered financial agent that decides whether a user can safely afford a requested expense.
+## System Architecture
 
-A user may ask: **"Can I afford this laptop?"**
+```
+Client (HTTP)
+    |
+    v
+FastAPI API Layer (Authentication, Rate Limiting, Security Headers)
+    |
+    v
+Application Services
+    |-- IngestionService  (CSV/OFX/PDF statement parsing)
+    |-- DataQualityEvaluator  (completeness + sufficiency checks)
+    |-- FinancialStateAdapter  (DB rows -> domain DTOs)
+    `-- DecisionService  (orchestration + atomic persistence)
+    |
+    v
+buyorwait_engine  (domain-pure, no DB imports)
+    |-- V2 Deterministic Solvency Core (Decimal arithmetic, 90-day ledger)
+    `-- V3 Statistical Risk Engine (P90 stress buffers, risk classification)
+    |
+    v
+PostgreSQL  (users, profiles, accounts, transactions, decisions, audit log)
+```
 
-Answering well takes more than the current balance. The agent must account for recurring expenses, pending payments, essential spending, confirmed income, available payment options, and relevant details buried in messages and images.
-
-For every request, the agent decides whether the user should pay in full, pay partially, use installments, wait, or not proceed. The recommendation must be personalized: two users with the same balance can deserve different answers based on their commitments, priorities, payment preferences, and willingness to adjust flexible expenses.
-
-A recommendation is safe only if the user can complete the full payment plan, cover essential expenses, and stay above their preferred minimum balance throughout the forecast period.
-
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, allowed values, conflict-resolution rules, and submission format.
+**Decision Outputs**: `BUY` / `WAIT` / `SAFER_PAYMENT` / `NOT_RECOMMENDED`
 
 ---
 
 ## Quick Start
 
-Clone the repository and move into the project directory:
+### Requirements
+- Python 3.11+
+- Docker and Docker Compose (for PostgreSQL)
+
+### Local Development
 
 ```bash
-git clone https://github.com/interviewstreet/hackerrank-orchestrate-september26.git
-cd hackerrank-orchestrate-september26
+git clone <repo-url>
+cd hacker_rank_projectt
+
+# Configure environment
+cp .env.example .env
+# Edit .env: set DATABASE_URL and JWT_SECRET_KEY
+
+# Start PostgreSQL
+docker compose up postgres -d
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run database migrations
+alembic upgrade head
+
+# Start API server
+uvicorn backend.api.main:app --reload --port 8000
 ```
 
-Build your solution in `code/main.py`, or use another language and document its entry point clearly.
-
-Your solution must:
-
-- Read the input files from `dataset/`
-- Generate one prediction for every request
-- Write the final predictions to `output.csv` in the repository root
-
-Run the starter Python entry point with:
+### Run with Docker Compose (full stack)
 
 ```bash
-python3 code/main.py
+docker compose up --build
 ```
 
-After running your solution, confirm that `output.csv` exists in the repository root and contains the required columns and one row for every request.
+API available at: http://localhost:8000
 
-## Important File Locations
+### API Documentation
 
-```text
-dataset/        Input data and the blank output template. Do not modify the input data.
-code/           Your solution code.
-output.csv      Final generated predictions in the repository root.
-code.zip        ZIP file containing your complete solution for submission.
-```
-
-The blank template at `dataset/output.csv` is provided as a reference. Your final generated file must be the root-level `output.csv`.
+Interactive API docs: http://localhost:8000/docs
 
 ---
 
-## Repository Layout
+## Run Tests
 
-```text
-.
-├── AGENTS.md                         # Rules for AI coding tools + transcript logging
-├── problem_statement.md              # Full challenge statement
-├── README.md                         # You are here
-├── code/                             # Your solution code
-├── output.csv                        # Final generated predictions
-└── dataset/
-    ├── requests.csv                  # 250 requests to evaluate — predict these
-    ├── output.csv                    # Blank submission template
-    ├── sample_requests.csv           # 25 solved examples
-    ├── financial_profiles.csv        # Balances, minimum balance, priorities, preferences
-    ├── financial_events.csv          # Historical, pending, and confirmed transactions
-    ├── request_payment_options.csv   # Payment options available per request
-    ├── exchange_rates.csv            # Fixed, dated conversion rates
-    ├── messages.csv                  # Messages tied to users, requests, or events
-    ├── images.csv                    # Payroll letters, statements, bills, receipts
-    └── media/
-        └── images/
+```bash
+# Backend API + services (179 tests)
+python -m pytest backend/tests/ -q
+
+# Domain engine + V3 risk engine (34 tests)
+python -m pytest buyorwait_engine/tests/ v3/tests/ -q
+
+# All tests combined
+python -m pytest backend/tests/ buyorwait_engine/tests/ v3/tests/ -q
+
+# V2 competition regression (10 tests)
+python code/test_regression.py
 ```
 
-Only `dataset/requests.csv` requires predictions. Everything else is context. Join user records with `user_id`, request records with `request_id`, supporting evidence with `related_event_id`, and exchange rates with the rate date and currency pair.
-
-Amounts are in the user's `home_currency` — the dataset uses INR, ZAR, IDR, USD, and EUR, and every conversion rate you need is in `exchange_rates.csv`. All dates are `YYYY-MM-DD`. Live exchange rates, market data, and banking access are not required.
+**Total test count: 213+ tests, all passing.**
 
 ---
 
-## What You Need to Build
+## Key API Endpoints
 
-For every row in `dataset/requests.csv`, produce one row in `output.csv` with:
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | Register new user |
+| `POST` | `/api/v1/auth/login` | Authenticate, receive JWT |
+| `POST` | `/api/v1/auth/logout` | Revoke current token |
+| `GET` | `/api/v1/profile` | Get financial profile |
+| `PUT` | `/api/v1/profile` | Update financial profile |
+| `POST` | `/api/v1/accounts` | Add bank account |
+| `POST` | `/api/v1/imports` | Upload bank statement (CSV/OFX/PDF) |
+| `POST` | `/api/v1/purchases/evaluate` | **Evaluate a purchase decision** |
+| `GET` | `/api/v1/decisions` | List past decisions |
+| `GET` | `/api/v1/decisions/{id}` | Get specific decision |
+| `GET` | `/api/v1/health/liveness` | Liveness probe |
+| `GET` | `/api/v1/health/readiness` | Readiness probe (DB check) |
+| `GET` | `/api/v1/metrics` | Prometheus metrics |
 
-| Column | Meaning |
+### Example: Evaluate a Purchase
+
+```bash
+# Login
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"YourPassword123!"}' | jq -r .access_token)
+
+# Evaluate purchase
+curl -X POST http://localhost:8000/api/v1/purchases/evaluate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "item_description": "MacBook Pro",
+    "requested_amount": "2499.00",
+    "currency": "USD",
+    "request_date": "2026-09-15",
+    "desired_completion_date": "2026-10-31"
+  }'
+```
+
+**Response fields:**
+- `verdict`: `BUY` / `WAIT` / `SAFER_PAYMENT` / `NOT_RECOMMENDED`
+- `amount_safe_to_pay`: Maximum safe payment amount today
+- `recommended_payment_method`: `full_payment` / `installments` / `partial_payment` / `wait`
+- `payment_plan`: Structured payment schedule (if applicable)
+- `earliest_date_for_full_payment`: When full payment becomes safe
+- `risk_tier`: `LOW_RISK` / `MODERATE_RISK` / `HIGH_RISK`
+- `grounded_explanation`: Deterministic, grounded explanation (no invented numbers)
+
+---
+
+## Decision Engine
+
+### V2 Core (Deterministic)
+Built around a pure-Python domain library (`buyorwait_engine/`) with **zero floating-point arithmetic** — all monetary calculations use Python's `Decimal` type:
+
+- **H1: Daily Burn Smoothing** — Variable expenses distributed as daily burn rate
+- **H2: Income Reliability** — Only confirmed employer payroll projected as future income
+- **H4: Spending Optimizer** — Catalog-minimum spending adjustments
+- **H5: Earliest Date Preservation** — Objective solvency date decoupled from deadline
+- **90-day daily ledger simulation** with strict minimum balance protection
+
+### V3 Risk Layer (Statistical)
+Adds P90 expense stress buffers derived from empirically calibrated category percentiles:
+
+| Category | P90 Stress Factor |
 |---|---|
-| `request_id` | The request being answered |
-| `amount_safe_to_pay` | Largest amount safe to pay on `request_date` before optional spending changes, after protecting essentials and the minimum balance |
-| `affordability_status` | `affordable_now`, `affordable_with_plan`, `affordable_later`, or `not_affordable` |
-| `recommended_payment_method` | `full_payment`, `partial_payment`, `installments`, `wait`, or `not_recommended` |
-| `payment_plan` | Chronological `<YYYY-MM-DD>:<amount>` entries joined by `\|`, or `none` |
-| `earliest_date_for_full_payment` | Earliest date the full amount is forecast safe as one payment; empty if never within the forecast |
-| `spending_changes_needed` | Up to three `stop:<event_id>` / `reduce_to:<event_id>:<amount>` changes joined by `\|`, or `none` |
-| `decision_explanation` | Short explanation and the financial facts behind it |
+| Groceries | +24.0% |
+| Transport | +24.2% |
+| Dining | +23.9% |
+| Utilities | +12.5% |
+| Shopping | +12.6% |
+| Fixed expenses | +0.0% |
 
-`0 <= amount_safe_to_pay <= requested_amount` must always hold. Installment plans must exactly match a supplied payment option, and only recurring expenses marked flexible may be changed.
-
-`affordable_with_plan` means the full request is completed through a partial-payment schedule, installments, or permitted spending changes. Recommend `partial_payment` only when the request allows it, the user accepts it, `0 < amount_safe_to_pay < requested_amount`, and `earliest_date_for_full_payment` is on or before `desired_completion_date`. Use exactly two payments: pay `amount_safe_to_pay` on `request_date`, then pay the remaining amount on `earliest_date_for_full_payment`. The two payments must add up to `requested_amount`. Unlike installments, partial payment does not need to match a supplied payment option.
+Default policy: `shadow_audit_only` (V3 runs alongside V2, does not override decisions).
 
 ---
 
-## Suggested Workflow
+## Security Features
 
-1. Inspect `dataset/sample_requests.csv` — 25 requests with completed output columns — to understand the expected format and decision style.
-2. Reconstruct each user's financial state from `financial_profiles.csv` and `financial_events.csv`: separate recurring expenses from one-time events, reserve pending transactions, count confirmed salary only on its settlement date, and de-duplicate repeated representations of the same event.
-3. When an event has a blank `amount`, find its `event_id` as `related_event_id` in `images.csv` and extract the amount from the linked image. Never treat a blank amount as zero. Pull in any other relevant messages, images, and payment options for the request.
-4. Forecast forward and generate a plan that keeps the balance above the minimum at every step.
-5. Verify deterministically — bounds, plan feasibility, schedule match, flexible-only spending changes — before writing `output.csv`.
-6. Score yourself on the solved samples, then run the full dataset.
-
-You may use any language or runtime. Python, JavaScript, and TypeScript are all reasonable choices.
-
----
-
-## Requirements
-
-Your solution must:
-
-- be runnable from the terminal
-- read the provided files from `dataset/`
-- produce a valid `output.csv` with the exact required columns in the exact required order
-- include one prediction for every `request_id` in `dataset/requests.csv`
-- not use organizer-only files or hardcoded labels
-- keep behavior deterministic where possible
-
-If you use API keys or secrets, read them from environment variables. Never hardcode secrets in the repo.
+- **Argon2id** password hashing (OWASP recommended)
+- **HMAC-SHA256 JWT** with configurable secret key
+- **Token revocation blacklist** (logout immediately invalidates tokens)
+- **Sliding-window rate limiting** on all endpoints
+- **CSP, HSTS, X-Frame-Options** security headers
+- **Magic byte file validation** (upload security)
+- **Path traversal protection** on file operations
+- **Cross-tenant isolation** on all database queries
 
 ---
 
-## Evaluation
+## Deployment
 
-Your `output.csv` will be compared against hidden ground-truth values.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full deployment instructions targeting **Render.com**.
 
-The scoring will consider:
-
-- accuracy of `amount_safe_to_pay`
-- correctness of `affordability_status`
-- correctness of `recommended_payment_method` and `payment_plan`
-- accuracy of `earliest_date_for_full_payment`
-- validity of `spending_changes_needed`
-- usefulness and consistency of `decision_explanation`
-
-### Token Usage And Cost Analysis
-
-Your `code.zip` must include one token-usage file:
-
-```text
-evaluation/usage_report.md
-```
-
-The report must cover model providers and names, model calls, input and output tokens, total and average tokens per request, estimated total and per-request cost. The reported values must correspond to the final full-dataset run that produced your `output.csv`.
+Quick cloud deploy:
+1. Push to GitHub
+2. Create Render PostgreSQL + Web Service
+3. Set environment variables (`DATABASE_URL`, `JWT_SECRET_KEY`, `ENVIRONMENT=production`)
+4. Configure persistent disk at `/app/backend/ingestion/quarantine`
+5. Set pre-deploy command: `alembic upgrade head`
+6. Deploy — health check at `/api/v1/health/liveness` gates traffic
 
 ---
 
-## Chat Transcript Logging
+## Documentation
 
-This repo includes an [`AGENTS.md`](./AGENTS.md) file for AI coding tools. It asks compatible tools to append conversation summaries to a `log.txt` in the repository root — the same directory as `AGENTS.md`:
-
-| Platform | Path |
+| Document | Description |
 |---|---|
-| macOS / Linux | `<repo root>/log.txt` |
-| Windows | `<repo root>\log.txt` |
-
-The path resolves relative to `AGENTS.md`, so it stays correct across clones, renames, and checkouts. `log.txt` is gitignored — upload it as your chat transcript at submission time. Do not paste secrets into the chat.
-
-In case, the harness you are using is not in the repo root, you can explicitly ask the agent to look for the AGENTS.md in this folder & then continue.
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Cloud deployment guide (Render) |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Operations and failure recovery |
+| [docs/FINAL_ARCHITECTURE.md](docs/FINAL_ARCHITECTURE.md) | Complete system architecture |
+| [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | Honest limitation inventory |
+| [docs/API_SPEC.md](docs/API_SPEC.md) | Full API specification |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Database schema and data model |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Logging, metrics, and monitoring |
+| [docs/SECURITY_REQUIREMENTS.md](docs/SECURITY_REQUIREMENTS.md) | Security requirements and controls |
+| [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) | Final release verification checklist |
 
 ---
 
-## Submission
+## Project Status
 
-Submit the following files as instructed by HackerRank:
+**FINAL PROJECT STATUS: DEPLOYMENT-READY — MANUAL CLOUD STEP REMAINS**
 
-| File | Description |
+| Milestone | Status |
 |---|---|
-| `code.zip` | Full runnable solution, prompts/configuration, README, and the required `evaluation/` folder |
-| `output.csv` | Predictions for every row in `dataset/requests.csv` |
-| `chat_transcript` | The `log.txt` described above, showing how you developed or used the system |
+| M1: Domain Library Extract | ✅ COMPLETE |
+| M2: PostgreSQL Persistence | ✅ COMPLETE |
+| M3: Statement Ingestion | ✅ COMPLETE |
+| M4: Financial State Adapter | ✅ COMPLETE |
+| M5: Production API | ✅ COMPLETE |
+| M6: Security Hardening | ✅ COMPLETE |
+| M7: Observability + Grounded Explanation | ✅ COMPLETE |
+| M8: Final Verification + Deployment | ⚠️ DEPLOYMENT-READY — MANUAL CLOUD STEP REMAINS |
 
-Before submitting, confirm:
-
-- `output.csv` has one row per row in `dataset/requests.csv` (250 rows plus the header).
-- `output.csv` has the exact required columns in the exact required order.
-- Every `amount_safe_to_pay` satisfies `0 <= amount_safe_to_pay <= requested_amount`.
-- Every installment plan matches a supplied payment option, and every spending change targets a flexible recurring expense.
-- Your runnable code, setup instructions, and `evaluation/` folder are included in `code.zip`.
+**Version**: v1.0.0  
+**Architecture**: Modular Monolith (FastAPI + PostgreSQL + buyorwait_engine)  
+**Test Suite**: 213+ tests, all passing

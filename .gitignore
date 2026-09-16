@@ -1,0 +1,27 @@
+# Secrets and sensitive environment configurations
+.env
+*.env
+.env.*
+!.env.example
+
+# Local database directories and SQLite files
+pgdata/
+pgdata_test/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Statement quarantine directories
+backend/ingestion/quarantine/
+backend/ingestion/quarantine_test/
+quarantine/
+
+# OS specific files
+.DS_Store
+Thumbs.db

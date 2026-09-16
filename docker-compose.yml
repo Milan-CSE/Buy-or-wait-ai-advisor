@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: buyorwait-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-buyorwait}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-buyorwait_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-buyorwait_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-buyorwait} -d ${POSTGRES_DB:-buyorwait_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: buyorwait-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-buyorwait}:${POSTGRES_PASSWORD:-buyorwait_dev_secret}@postgres:5432/${POSTGRES_DB:-buyorwait_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-insecure-dev-signing-key-minimum-32-chars-change-in-prod-immediately!}
+      RATE_LIMIT_AUTH: 5
+      RATE_LIMIT_EVALUATE: 30
+      RATE_LIMIT_UPLOAD: 10
+      RATE_LIMIT_GENERAL: 120
+    ports:
+      - "8000:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  pgdata:

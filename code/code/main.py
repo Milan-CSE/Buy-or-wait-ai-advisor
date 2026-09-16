@@ -60,8 +60,6 @@ def process_request(
     dataset: Dataset,
     fx: FXEngine,
     debug: bool = False,
-    use_daily_burn: bool = True,
-    filter_unreliable_income: bool = True,
 ) -> tuple:
     """
     Process a single request and return (Decision, RequestDiagnostic, errors).
@@ -77,8 +75,6 @@ def process_request(
             request_date=req.request_date,
             dataset=dataset,
             fx=fx,
-            use_daily_burn=use_daily_burn,
-            filter_unreliable_income=filter_unreliable_income,
         )
 
         # 2. Compute baseline safe amount and earliest full payment date
@@ -189,14 +185,9 @@ def write_output(decisions: List[Decision], output_path: str) -> None:
     print(f'Output written to {output_path}')
 
 
-def run(
-    mode: str = 'full',
-    debug: bool = False,
-    use_daily_burn: bool = True,
-    filter_unreliable_income: bool = True,
-) -> List[Decision]:
+def run(mode: str = 'full', debug: bool = False) -> List[Decision]:
     """Main runner."""
-    print(f'Loading dataset... mode={mode}, use_daily_burn={use_daily_burn}, filter_unreliable_income={filter_unreliable_income}')
+    print(f'Loading dataset... mode={mode}')
     t0 = time.time()
 
     dataset = load_dataset()
@@ -220,10 +211,7 @@ def run(
 
     for i, req in enumerate(requests_to_process, 1):
         t1 = time.time()
-        decision, diag, errors = process_request(
-            req, dataset, fx, debug=debug, use_daily_burn=use_daily_burn,
-            filter_unreliable_income=filter_unreliable_income,
-        )
+        decision, diag, errors = process_request(req, dataset, fx, debug=debug)
         elapsed = time.time() - t1
 
         if errors:
@@ -257,18 +245,9 @@ def main():
     parser = argparse.ArgumentParser(description='Buy or Wait? financial decision engine')
     parser.add_argument('--mode', choices=['full', 'sample'], default='full',
                         help='full: process evaluation requests; sample: process sample requests')
-    parser.add_argument('--burn-mode', choices=['daily_burn', 'v1_stepped'], default='daily_burn',
-                        help='daily_burn (default): smooth variable expenses; v1_stepped: legacy stepping')
-    parser.add_argument('--income-mode', choices=['reliable_only', 'v1_all'], default='reliable_only',
-                        help='reliable_only (default): filter variable gig/platform payouts; v1_all: legacy all salary')
     parser.add_argument('--debug', action='store_true', help='Print per-request diagnostics')
     args = parser.parse_args()
-    run(
-        mode=args.mode,
-        debug=args.debug,
-        use_daily_burn=(args.burn_mode == 'daily_burn'),
-        filter_unreliable_income=(args.income_mode == 'reliable_only'),
-    )
+    run(mode=args.mode, debug=args.debug)
 
 
 if __name__ == '__main__':
