@@ -40,6 +40,9 @@ COPY --chown=appuser:appgroup buyorwait_engine /app/buyorwait_engine
 COPY --chown=appuser:appgroup code /app/code
 COPY --chown=appuser:appgroup v3 /app/v3
 COPY --chown=appuser:appgroup dataset /app/dataset
+COPY --chown=appuser:appgroup alembic.ini /app/alembic.ini
+COPY --chown=appuser:appgroup start.sh /app/start.sh
+
 
 # Create quarantine directory owned by appuser
 RUN mkdir -p /app/backend/ingestion/quarantine && \
