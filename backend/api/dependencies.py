@@ -12,6 +12,7 @@ from typing import Generator, Optional
 import uuid
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from backend.auth.jwt import (
@@ -81,9 +82,18 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
+# OpenAPI HTTP Bearer JWT security scheme definition
+bearer_scheme = HTTPBearer(
+    scheme_name="BearerAuth",
+    description="JWT Bearer token. Enter the access token received from /api/v1/auth/login.",
+    bearerFormat="JWT",
+    auto_error=False,
+)
+
+
 def get_current_user(
     request: Request,
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    auth_creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     session: Session = Depends(get_db),
 ) -> User:
     """
@@ -91,6 +101,7 @@ def get_current_user(
     Rejects missing, expired, revoked, or invalid tokens with RFC 7807 problem details.
     Zero client trust: No raw user IDs or development shortcuts are accepted.
     """
+    authorization = request.headers.get("Authorization")
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

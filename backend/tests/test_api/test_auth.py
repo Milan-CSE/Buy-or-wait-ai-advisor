@@ -69,6 +69,25 @@ class TestAuthBoundary(unittest.TestCase):
         res = self.client.get("/api/v1/profile", headers={"Authorization": f"Bearer {token}"})
         self.assertEqual(res.status_code, 404)
 
+    def test_openapi_security_scheme_bearer_jwt(self):
+        openapi_res = self.client.get("/openapi.json")
+        self.assertEqual(openapi_res.status_code, 200)
+        spec = openapi_res.json()
+        schemes = spec.get("components", {}).get("securitySchemes", {})
+        self.assertIn("BearerAuth", schemes)
+        self.assertEqual(schemes["BearerAuth"]["type"], "http")
+        self.assertEqual(schemes["BearerAuth"]["scheme"], "bearer")
+        self.assertEqual(schemes["BearerAuth"]["bearerFormat"], "JWT")
+
+        # Protected endpoints must declare BearerAuth security
+        paths = spec.get("paths", {})
+        self.assertIn("/api/v1/profile", paths)
+        self.assertEqual(paths["/api/v1/profile"]["get"]["security"], [{"BearerAuth": []}])
+        self.assertEqual(paths["/api/v1/purchases/evaluate"]["post"]["security"], [{"BearerAuth": []}])
+
+        # Public endpoints must not declare BearerAuth security
+        self.assertNotIn("security", paths["/api/v1/auth/login"]["post"])
+
 
 if __name__ == "__main__":
     unittest.main()
