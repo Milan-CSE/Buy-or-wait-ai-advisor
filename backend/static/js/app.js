@@ -43,6 +43,20 @@ function showAlert(message, type = 'info', timeout = 5000) {
   }
 }
 
+// Helper: Currency Symbol
+function getCurrencySymbol(currency = 'USD') {
+  const c = (currency || '').toUpperCase().trim();
+  switch (c) {
+    case 'INR': return '₹';
+    case 'USD': return '$';
+    case 'EUR': return '€';
+    case 'IDR': return 'Rp ';
+    case 'ZAR': return 'R ';
+    case 'GBP': return '£';
+    default: return '';
+  }
+}
+
 // Helper: Currency Formatting
 function formatCurrency(amount, currency = 'USD') {
   if (amount === null || amount === undefined || isNaN(Number(amount))) {
@@ -576,17 +590,16 @@ function renderEvaluationResult(res, requestedCurrency = null, requestedAmount =
     expAction = res.grounded_explanation.suggested_action || '';
     if (res.grounded_explanation.supporting_facts) {
       const facts = res.grounded_explanation.supporting_facts;
-      expFacts = Object.entries(facts).map(([k, v]) => {
-        if (k === 'fx_metadata' && typeof v === 'object' && v !== null) {
-          return `<li><strong>fx conversion:</strong> 1 ${v.purchase_currency} = ${v.exchange_rate} ${v.home_currency} (${v.converted_amount_home} ${v.home_currency})</li>`;
-        }
-        let displayVal = v;
-        // Format monetary amounts if key implies monetary value
-        if (['requested_amount', 'safe_amount', 'headroom_p50', 'headroom_p90', 'safe_amount_p50', 'safe_amount_p90', 'reserve_required'].includes(k) && v !== null && v !== undefined) {
-          displayVal = formatCurrency(v, currency);
-        }
-        return `<li><strong>${k.replace(/_/g, ' ')}:</strong> ${displayVal}</li>`;
-      }).join('');
+      expFacts = Object.entries(facts)
+        .filter(([k]) => k !== 'fx_metadata')
+        .map(([k, v]) => {
+          let displayVal = v;
+          // Format monetary amounts if key implies monetary value
+          if (['requested_amount', 'safe_amount', 'headroom_p50', 'headroom_p90', 'safe_amount_p50', 'safe_amount_p90', 'reserve_required'].includes(k) && v !== null && v !== undefined) {
+            displayVal = formatCurrency(v, currency);
+          }
+          return `<li><strong>${k.replace(/_/g, ' ')}:</strong> ${displayVal}</li>`;
+        }).join('');
     }
   }
 
@@ -599,40 +612,42 @@ function renderEvaluationResult(res, requestedCurrency = null, requestedAmount =
     const badgeText = isEstimated ? 'Estimated Future Rate' : 'Fixed Historical Rate';
     const badgeColor = isEstimated ? '#b45309' : '#15803d';
     const badgeBg = isEstimated ? '#fef3c7' : '#dcfce7';
+    const homeSymbol = getCurrencySymbol(fx.home_currency);
+    const rateFormatted = `${homeSymbol}${fx.exchange_rate}`;
 
     fxCardHtml = `
-      <div style="background: var(--bg-main); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: var(--radius); padding: 1rem; margin-bottom: 1.25rem;">
+      <div style="background: var(--bg-main); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1.25rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
-          <strong style="font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; color: var(--text-main);">
-            <span>💱</span> Multi-Currency Conversion Breakdown
-          </strong>
+          <div style="display: flex; align-items: center; gap: 0.4rem;">
+            <span style="font-size: 1.1rem;">💱</span>
+            <strong style="font-size: 0.95rem; color: var(--text-main);">Currency Conversion</strong>
+          </div>
           <span style="font-size: 0.725rem; font-weight: 700; padding: 0.25rem 0.65rem; border-radius: 9999px; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeColor};">
             ${badgeText}
           </span>
         </div>
-        <div class="grid-2" style="gap: 0.75rem; font-size: 0.825rem;">
+        <div class="grid-2" style="gap: 0.75rem; margin-bottom: 0.75rem;">
           <div style="background: #fff; padding: 0.65rem 0.85rem; border-radius: var(--radius); border: 1px solid var(--border);">
-            <div style="color: var(--text-muted); font-size: 0.75rem;">Original Purchase Proposal</div>
-            <div style="font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin-top: 0.15rem;">
-              ${formatCurrency(requestedAmount || (res.grounded_explanation && res.grounded_explanation.supporting_facts ? res.grounded_explanation.supporting_facts.requested_amount : 0), fx.purchase_currency)}
-            </div>
-            <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem;">Currency: <strong>${fx.purchase_currency}</strong></div>
+            <div style="color: var(--text-muted); font-size: 0.75rem;">Purchase Currency</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin-top: 0.15rem;">${fx.purchase_currency}</div>
           </div>
           <div style="background: #fff; padding: 0.65rem 0.85rem; border-radius: var(--radius); border: 1px solid var(--border);">
-            <div style="color: var(--text-muted); font-size: 0.75rem;">Converted For Solvency Evaluation</div>
-            <div style="font-size: 1.1rem; font-weight: 700; color: var(--primary); margin-top: 0.15rem;">
-              ${formatCurrency(fx.converted_amount_home, fx.home_currency)}
-            </div>
-            <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem;">Home Currency: <strong>${fx.home_currency}</strong></div>
+            <div style="color: var(--text-muted); font-size: 0.75rem;">Home Currency</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin-top: 0.15rem;">${fx.home_currency}</div>
           </div>
         </div>
-        <div style="margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed var(--border); font-size: 0.78rem; color: var(--text-muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+        <div style="background: #fff; padding: 0.75rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
           <div>
-            <strong>Applied Rate:</strong> 1 ${fx.purchase_currency} = ${fx.exchange_rate} ${fx.home_currency}
-            (Effective Date: <strong>${fx.exchange_rate_date}</strong>)
+            <div style="color: var(--text-muted); font-size: 0.75rem;">Exchange Rate</div>
+            <div style="font-size: 1.15rem; font-weight: 800; color: var(--primary); margin-top: 0.15rem;">
+              1 ${fx.purchase_currency} = ${rateFormatted} ${fx.home_currency}
+            </div>
           </div>
-          <div>
-            <strong>Source:</strong> ${fx.source}
+          <div style="text-align: right;">
+            <div style="color: var(--text-muted); font-size: 0.75rem;">Exchange Rate Date</div>
+            <div style="font-size: 0.95rem; font-weight: 600; color: var(--text-main); margin-top: 0.15rem;">
+              ${fx.exchange_rate_date || 'N/A'}
+            </div>
           </div>
         </div>
       </div>
