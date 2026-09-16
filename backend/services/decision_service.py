@@ -34,9 +34,15 @@ from backend.services.errors import (
 )
 from backend.services.purchase_validator import PurchaseValidator
 from backend.services.state_adapter import FinancialStateAdapter
-from buyorwait_engine.currency.fx import FXEngine
-from buyorwait_engine.domain.models import DecisionResult, PurchaseProposal
+from buyorwait_engine.currency.fx import FXEngine, FXRateMetadata
+from buyorwait_engine.domain.models import (
+    DecisionResult,
+    PaymentOptionInput,
+    PurchaseProposal,
+    RiskAssessmentResult,
+)
 from buyorwait_engine.engine import BuyOrWaitEngine
+from buyorwait_engine.risk.classifier import RiskProfile
 from buyorwait_engine.risk.config import RiskCalibrationConfig, CURRENT_CALIBRATION_VERSION
 
 
@@ -52,6 +58,7 @@ class DecisionServiceResult:
     decision_record: Optional[Decision] = None
     audit_event: Optional[AuditEvent] = None
     purchase_request: Optional[PurchaseRequest] = None
+    fx_metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         if not self.is_sufficient:
@@ -81,6 +88,8 @@ class DecisionServiceResult:
         }
         if self.decision.risk_assessment:
             out["risk_assessment"] = self.decision.risk_assessment.to_dict()
+        if self.fx_metadata:
+            out["fx_metadata"] = self.fx_metadata
         return out
 
 
@@ -185,8 +194,69 @@ class DecisionService:
                 audit_event=audit_event,
             )
 
-        # 4. State Adaptation
         assert profile is not None
+        home_currency = (profile.home_currency or "USD").strip().upper()
+        proposal_currency = (proposal.currency or home_currency).strip().upper()
+
+        if proposal_currency != home_currency:
+            fx_meta = self.fx.resolve_rate(proposal_currency, home_currency, eval_date)
+            rate_to_home = fx_meta.rate
+            rate_to_purchase = (Decimal("1") / rate_to_home).quantize(Decimal("0.00000001"))
+
+            converted_options = []
+            if proposal.payment_options:
+                for opt in proposal.payment_options:
+                    converted_options.append(PaymentOptionInput(
+                        payment_option_id=opt.payment_option_id,
+                        payment_type=opt.payment_type,
+                        number_of_payments=opt.number_of_payments,
+                        first_payment_date=opt.first_payment_date,
+                        installment_amount=(opt.installment_amount * rate_to_home).quantize(Decimal("0.01")),
+                        total_amount=(opt.total_amount * rate_to_home).quantize(Decimal("0.01")),
+                        interest_rate_pct=opt.interest_rate_pct,
+                        payment_frequency_days=opt.payment_frequency_days,
+                        financing_fee=(opt.financing_fee * rate_to_home).quantize(Decimal("0.01")),
+                    ))
+
+            converted_amount_home = (proposal.requested_amount * rate_to_home).quantize(Decimal("0.01"))
+            proposal_for_engine = PurchaseProposal(
+                request_id=proposal.request_id,
+                user_id=proposal.user_id,
+                requested_amount=converted_amount_home,
+                currency=home_currency,
+                request_date=proposal.request_date,
+                desired_completion_date=proposal.desired_completion_date,
+                allows_partial_payment=proposal.allows_partial_payment,
+                item_description=proposal.item_description,
+                merchant_name=proposal.merchant_name,
+                category=proposal.category,
+                item_category=proposal.item_category,
+                payment_options=converted_options,
+            )
+            fx_info = {
+                "purchase_currency": proposal_currency,
+                "home_currency": home_currency,
+                "exchange_rate": str(fx_meta.rate),
+                "exchange_rate_date": fx_meta.effective_date.isoformat(),
+                "is_estimated": fx_meta.is_estimated,
+                "source": fx_meta.source,
+                "converted_amount_home": str(converted_amount_home),
+            }
+        else:
+            proposal_for_engine = proposal
+            rate_to_home = Decimal("1.0000")
+            rate_to_purchase = Decimal("1.0000")
+            fx_info = {
+                "purchase_currency": proposal_currency,
+                "home_currency": home_currency,
+                "exchange_rate": "1.0000",
+                "exchange_rate_date": eval_date.isoformat(),
+                "is_estimated": False,
+                "source": "identity",
+                "converted_amount_home": str(proposal.requested_amount),
+            }
+
+        # 4. State Adaptation
         profile_input, domain_events = self.adapter.adapt(
             profile=profile,
             accounts=accounts,
@@ -196,15 +266,82 @@ class DecisionService:
 
         # 5. Domain Engine Evaluation
         try:
-            decision_result = self.engine.evaluate(
+            raw_decision = self.engine.evaluate(
                 profile=profile_input,
                 events=domain_events,
-                purchase=proposal,
+                purchase=proposal_for_engine,
             )
         except Exception as e:
             raise DecisionEngineError(f"Financial decision engine evaluation failed: {e}")
 
-        # 6. Persistence
+        # 6. Currency Scaling Back to Purchase Currency
+        if proposal_currency != home_currency:
+            if raw_decision.amount_safe_to_pay >= proposal_for_engine.requested_amount:
+                safe_amount_purchase = proposal.requested_amount
+            elif raw_decision.amount_safe_to_pay <= Decimal("0.00"):
+                safe_amount_purchase = Decimal("0.00")
+            else:
+                converted_safe = (raw_decision.amount_safe_to_pay * rate_to_purchase).quantize(Decimal("0.01"))
+                safe_amount_purchase = min(proposal.requested_amount, max(Decimal("0.00"), converted_safe))
+
+            # Plan conversion
+            if raw_decision.payment_plan and raw_decision.payment_plan != "none":
+                if raw_decision.recommended_payment_method == "partial_payment":
+                    remainder = proposal.requested_amount - safe_amount_purchase
+                    earliest_dt = (
+                        raw_decision.earliest_date_for_full_payment.isoformat()
+                        if raw_decision.earliest_date_for_full_payment
+                        else proposal.desired_completion_date.isoformat()
+                    )
+                    converted_plan = f"{proposal.request_date.isoformat()}:{safe_amount_purchase}|{earliest_dt}:{remainder}"
+                else:
+                    parts = raw_decision.payment_plan.split("|")
+                    converted_parts = []
+                    for part in parts:
+                        if ":" in part:
+                            dt_str, amt_str = part.split(":", 1)
+                            converted_amt = (Decimal(amt_str) * rate_to_purchase).quantize(Decimal("0.01"))
+                            converted_parts.append(f"{dt_str}:{converted_amt}")
+                        else:
+                            converted_parts.append(part)
+                    converted_plan = "|".join(converted_parts)
+            else:
+                converted_plan = raw_decision.payment_plan
+
+            # Risk metrics conversion
+            scaled_risk = None
+            if raw_decision.risk_assessment:
+                r = raw_decision.risk_assessment
+                scaled_risk = RiskAssessmentResult(
+                    risk_tier=r.risk_tier,
+                    safe_amount_p50=(r.safe_amount_p50 * rate_to_purchase).quantize(Decimal("0.01")),
+                    safe_amount_p90=(r.safe_amount_p90 * rate_to_purchase).quantize(Decimal("0.01")),
+                    minimum_balance_p50=(r.minimum_balance_p50 * rate_to_purchase).quantize(Decimal("0.01")),
+                    minimum_balance_p90=(r.minimum_balance_p90 * rate_to_purchase).quantize(Decimal("0.01")),
+                    headroom_p50=(r.headroom_p50 * rate_to_purchase).quantize(Decimal("0.01")),
+                    headroom_p90=(r.headroom_p90 * rate_to_purchase).quantize(Decimal("0.01")),
+                    risk_reason=r.risk_reason,
+                    stress_summary=r.stress_summary,
+                    calibration_version=r.calibration_version,
+                    p90_breach_detected=r.p90_breach_detected,
+                )
+
+            decision_result = DecisionResult(
+                request_id=raw_decision.request_id,
+                amount_safe_to_pay=safe_amount_purchase,
+                affordability_status=raw_decision.affordability_status,
+                recommended_payment_method=raw_decision.recommended_payment_method,
+                payment_plan=converted_plan,
+                earliest_date_for_full_payment=raw_decision.earliest_date_for_full_payment,
+                spending_changes_needed=raw_decision.spending_changes_needed,
+                decision_explanation=raw_decision.decision_explanation,
+                verdict=raw_decision.verdict,
+                risk_assessment=scaled_risk,
+            )
+        else:
+            decision_result = raw_decision
+
+        # 7. Persistence
         purchase_entity: Optional[PurchaseRequest] = None
         decision_entity: Optional[Decision] = None
         audit_event: Optional[AuditEvent] = None
@@ -248,6 +385,7 @@ class DecisionService:
                         "engine_version": ENGINE_VERSION,
                         "calibration_version": calib_ver,
                         "decision_policy_version": self.risk_policy,
+                        "fx_metadata": fx_info,
                     },
                 )
                 self.session.commit()
@@ -262,4 +400,5 @@ class DecisionService:
             decision_record=decision_entity,
             audit_event=audit_event,
             purchase_request=purchase_entity,
+            fx_metadata=fx_info,
         )

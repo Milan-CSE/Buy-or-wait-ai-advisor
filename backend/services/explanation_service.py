@@ -33,6 +33,7 @@ class ExplanationFacts:
     safe_amount_p90: Optional[str]
     stress_summary: Optional[str]
     spending_changes_needed: str
+    fx_metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -64,6 +65,7 @@ class ExplanationService:
         requested_amount: Decimal,
         currency: str = "USD",
         minimum_balance: Optional[Decimal] = None,
+        fx_metadata: Optional[Dict[str, Any]] = None,
     ) -> GroundedExplanation:
         """
         Generates grounded explanation for a completed DecisionResult.
@@ -100,6 +102,7 @@ class ExplanationService:
             safe_amount_p90=safe_p90,
             stress_summary=stress_summary,
             spending_changes_needed=decision.spending_changes_needed,
+            fx_metadata=fx_metadata,
         )
 
         verdict = decision.verdict
@@ -137,6 +140,16 @@ class ExplanationService:
                 f"(safe amount: {currency} {facts.safe_amount}). No safe installment or delayed payment schedule was found within 90 days."
             )
             action = "Do not proceed with this purchase at this time, or consider a significantly smaller purchase amount."
+
+        if fx_metadata and fx_metadata.get("purchase_currency") != fx_metadata.get("home_currency"):
+            p_curr = fx_metadata.get("purchase_currency")
+            h_curr = fx_metadata.get("home_currency")
+            rate_val = fx_metadata.get("exchange_rate")
+            conv_val = fx_metadata.get("converted_amount_home")
+            dt_val = fx_metadata.get("exchange_rate_date")
+            is_est = fx_metadata.get("is_estimated", False)
+            est_text = "projected future rate" if is_est else "fixed historical rate"
+            concise += f" (Converted at 1 {p_curr} = {rate_val} {h_curr} [{est_text} as of {dt_val}], equaling {conv_val} {h_curr} in your home currency)."
 
         # 2. Grounded Risk Explanation
         if risk_tier == "LOW_RISK":

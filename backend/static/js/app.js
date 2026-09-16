@@ -51,7 +51,7 @@ function formatCurrency(amount, currency = 'USD') {
   const num = Number(amount);
   const curr = (currency || 'USD').toUpperCase().trim();
 
-  // Explicit mappings for common currencies
+  // Explicit mappings for supported currencies
   if (curr === 'INR') {
     try {
       return new Intl.NumberFormat('en-IN', {
@@ -78,6 +78,45 @@ function formatCurrency(amount, currency = 'USD') {
     }
   }
 
+  if (curr === 'EUR') {
+    try {
+      return new Intl.NumberFormat('de-DE', {
+        style: 'currency',
+        currency: 'EUR',
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+      }).format(num);
+    } catch (_) {
+      return `€${num.toFixed(2)}`;
+    }
+  }
+
+  if (curr === 'IDR') {
+    try {
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0,
+        minimumFractionDigits: 0,
+      }).format(num);
+    } catch (_) {
+      return `Rp ${Math.round(num).toLocaleString()}`;
+    }
+  }
+
+  if (curr === 'ZAR') {
+    try {
+      return new Intl.NumberFormat('en-ZA', {
+        style: 'currency',
+        currency: 'ZAR',
+        maximumFractionDigits: 2,
+        minimumFractionDigits: 2,
+      }).format(num);
+    } catch (_) {
+      return `R ${num.toFixed(2)}`;
+    }
+  }
+
   // Dynamic formatting for all other ISO currencies with graceful fallback
   try {
     return new Intl.NumberFormat('en-US', {
@@ -88,6 +127,45 @@ function formatCurrency(amount, currency = 'USD') {
     }).format(num);
   } catch (_) {
     return `${curr} ${num.toFixed(2)}`;
+  }
+}
+
+// Currency Dropdown & Custom Code Helpers
+function handleCurrencyDropdownChange(context) {
+  const selectEl = document.getElementById(context === 'eval' ? 'evalCurrency' : 'profHomeCurrency');
+  const customEl = document.getElementById(context === 'eval' ? 'evalCurrencyCustom' : 'profHomeCurrencyCustom');
+  if (!selectEl || !customEl) return;
+  if (selectEl.value === 'OTHER') {
+    customEl.style.display = 'block';
+    customEl.focus();
+  } else {
+    customEl.style.display = 'none';
+  }
+}
+
+function getEffectiveCurrency(context) {
+  const selectEl = document.getElementById(context === 'eval' ? 'evalCurrency' : 'profHomeCurrency');
+  const customEl = document.getElementById(context === 'eval' ? 'evalCurrencyCustom' : 'profHomeCurrencyCustom');
+  if (selectEl && selectEl.value === 'OTHER' && customEl && customEl.value.trim()) {
+    return customEl.value.trim().toUpperCase();
+  }
+  return selectEl ? selectEl.value.trim().toUpperCase() : 'USD';
+}
+
+function setCurrencyDropdownValue(context, currCode) {
+  const selectEl = document.getElementById(context === 'eval' ? 'evalCurrency' : 'profHomeCurrency');
+  const customEl = document.getElementById(context === 'eval' ? 'evalCurrencyCustom' : 'profHomeCurrencyCustom');
+  if (!selectEl || !customEl) return;
+  const upper = (currCode || 'USD').toUpperCase().trim();
+  const options = Array.from(selectEl.options).map(o => o.value);
+  if (options.includes(upper) && upper !== 'OTHER') {
+    selectEl.value = upper;
+    customEl.style.display = 'none';
+    customEl.value = '';
+  } else {
+    selectEl.value = 'OTHER';
+    customEl.style.display = 'block';
+    customEl.value = upper;
   }
 }
 
@@ -287,10 +365,10 @@ async function loadProfile() {
   try {
     const prof = await apiRequest('/profile');
     const homeCurr = prof.home_currency || 'USD';
-    document.getElementById('profHomeCurrency').value = homeCurr;
-    const evalCurrEl = document.getElementById('evalCurrency');
-    if (evalCurrEl && (!evalCurrEl.value || evalCurrEl.value === 'USD')) {
-      evalCurrEl.value = homeCurr;
+    setCurrencyDropdownValue('prof', homeCurr);
+    const evalCurr = getEffectiveCurrency('eval');
+    if (!evalCurr || evalCurr === 'USD') {
+      setCurrencyDropdownValue('eval', homeCurr);
     }
     document.getElementById('profBalance').value = prof.current_available_balance ?? '';
     document.getElementById('profMinKeep').value = prof.minimum_balance_to_keep ?? '';
@@ -314,7 +392,7 @@ async function handleSaveProfile(e) {
   btn.innerHTML = '<span class="spinner"></span> Saving...';
 
   const body = {
-    home_currency: document.getElementById('profHomeCurrency').value.trim().toUpperCase(),
+    home_currency: getEffectiveCurrency('prof'),
     current_available_balance: parseFloat(document.getElementById('profBalance').value) || 0,
     minimum_balance_to_keep: parseFloat(document.getElementById('profMinKeep').value) || 0,
     protected_categories: document.getElementById('profProtected').value.split(',').map(s => s.trim()).filter(Boolean),
@@ -443,7 +521,7 @@ async function handleEvaluate(e) {
   const payload = {
     item_description: document.getElementById('evalDesc').value.trim(),
     requested_amount: parseFloat(document.getElementById('evalAmount').value),
-    currency: document.getElementById('evalCurrency').value.trim().toUpperCase(),
+    currency: getEffectiveCurrency('eval'),
     request_date: reqDate,
     desired_completion_date: compDate,
     allows_partial_payment: document.getElementById('evalPartial').checked,
@@ -481,7 +559,7 @@ function renderEvaluationResult(res, requestedCurrency = null, requestedAmount =
     (res.grounded_explanation && res.grounded_explanation.supporting_facts && res.grounded_explanation.supporting_facts.currency) ||
     res.currency ||
     requestedCurrency ||
-    (document.getElementById('evalCurrency') ? document.getElementById('evalCurrency').value : null) ||
+    getEffectiveCurrency('eval') ||
     'USD'
   ).toUpperCase().trim();
 
@@ -499,6 +577,9 @@ function renderEvaluationResult(res, requestedCurrency = null, requestedAmount =
     if (res.grounded_explanation.supporting_facts) {
       const facts = res.grounded_explanation.supporting_facts;
       expFacts = Object.entries(facts).map(([k, v]) => {
+        if (k === 'fx_metadata' && typeof v === 'object' && v !== null) {
+          return `<li><strong>fx conversion:</strong> 1 ${v.purchase_currency} = ${v.exchange_rate} ${v.home_currency} (${v.converted_amount_home} ${v.home_currency})</li>`;
+        }
         let displayVal = v;
         // Format monetary amounts if key implies monetary value
         if (['requested_amount', 'safe_amount', 'headroom_p50', 'headroom_p90', 'safe_amount_p50', 'safe_amount_p90', 'reserve_required'].includes(k) && v !== null && v !== undefined) {
@@ -507,6 +588,55 @@ function renderEvaluationResult(res, requestedCurrency = null, requestedAmount =
         return `<li><strong>${k.replace(/_/g, ' ')}:</strong> ${displayVal}</li>`;
       }).join('');
     }
+  }
+
+  // Multi-currency conversion breakdown card
+  let fxCardHtml = '';
+  const fx = res.fx_metadata || (res.grounded_explanation && res.grounded_explanation.supporting_facts && res.grounded_explanation.supporting_facts.fx_metadata ? res.grounded_explanation.supporting_facts.fx_metadata : null);
+
+  if (fx && fx.purchase_currency && fx.home_currency && fx.purchase_currency !== fx.home_currency) {
+    const isEstimated = Boolean(fx.is_estimated);
+    const badgeText = isEstimated ? 'Estimated Future Rate' : 'Fixed Historical Rate';
+    const badgeColor = isEstimated ? '#b45309' : '#15803d';
+    const badgeBg = isEstimated ? '#fef3c7' : '#dcfce7';
+
+    fxCardHtml = `
+      <div style="background: var(--bg-main); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: var(--radius); padding: 1rem; margin-bottom: 1.25rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+          <strong style="font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; color: var(--text-main);">
+            <span>💱</span> Multi-Currency Conversion Breakdown
+          </strong>
+          <span style="font-size: 0.725rem; font-weight: 700; padding: 0.25rem 0.65rem; border-radius: 9999px; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeColor};">
+            ${badgeText}
+          </span>
+        </div>
+        <div class="grid-2" style="gap: 0.75rem; font-size: 0.825rem;">
+          <div style="background: #fff; padding: 0.65rem 0.85rem; border-radius: var(--radius); border: 1px solid var(--border);">
+            <div style="color: var(--text-muted); font-size: 0.75rem;">Original Purchase Proposal</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin-top: 0.15rem;">
+              ${formatCurrency(requestedAmount || (res.grounded_explanation && res.grounded_explanation.supporting_facts ? res.grounded_explanation.supporting_facts.requested_amount : 0), fx.purchase_currency)}
+            </div>
+            <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem;">Currency: <strong>${fx.purchase_currency}</strong></div>
+          </div>
+          <div style="background: #fff; padding: 0.65rem 0.85rem; border-radius: var(--radius); border: 1px solid var(--border);">
+            <div style="color: var(--text-muted); font-size: 0.75rem;">Converted For Solvency Evaluation</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: var(--primary); margin-top: 0.15rem;">
+              ${formatCurrency(fx.converted_amount_home, fx.home_currency)}
+            </div>
+            <div style="color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem;">Home Currency: <strong>${fx.home_currency}</strong></div>
+          </div>
+        </div>
+        <div style="margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px dashed var(--border); font-size: 0.78rem; color: var(--text-muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+          <div>
+            <strong>Applied Rate:</strong> 1 ${fx.purchase_currency} = ${fx.exchange_rate} ${fx.home_currency}
+            (Effective Date: <strong>${fx.exchange_rate_date}</strong>)
+          </div>
+          <div>
+            <strong>Source:</strong> ${fx.source}
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   // Risk metrics formatted with dynamic currency
@@ -539,6 +669,8 @@ function renderEvaluationResult(res, requestedCurrency = null, requestedAmount =
         </div>
         <span style="font-size: 0.8rem; color: var(--text-muted);">Status: <strong>${(res.affordability_status || '').replace(/_/g, ' ')}</strong></span>
       </div>
+
+      ${fxCardHtml}
 
       <div class="grid-2" style="margin-bottom: 1.25rem;">
         <div class="stat-box">

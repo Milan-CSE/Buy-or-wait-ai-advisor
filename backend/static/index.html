@@ -104,7 +104,15 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="evalCurrency">Currency</label>
-                  <input type="text" id="evalCurrency" class="form-input" value="USD" maxlength="3" required />
+                  <select id="evalCurrency" class="form-select" onchange="handleCurrencyDropdownChange('eval')" required>
+                    <option value="USD">USD - US Dollar ($)</option>
+                    <option value="INR">INR - Indian Rupee (₹)</option>
+                    <option value="EUR">EUR - Euro (€)</option>
+                    <option value="IDR">IDR - Indonesian Rupiah (Rp)</option>
+                    <option value="ZAR">ZAR - South African Rand (R)</option>
+                    <option value="OTHER">Other ISO Code...</option>
+                  </select>
+                  <input type="text" id="evalCurrencyCustom" class="form-input" placeholder="e.g. JPY" maxlength="3" style="display:none; margin-top: 0.35rem;" />
                 </div>
               </div>
               <div class="grid-2" style="gap: 0.75rem;">
@@ -161,7 +169,15 @@
             <div class="grid-3">
               <div class="form-group">
                 <label class="form-label" for="profHomeCurrency">Home Currency</label>
-                <input type="text" id="profHomeCurrency" class="form-input" value="USD" maxlength="3" required />
+                <select id="profHomeCurrency" class="form-select" onchange="handleCurrencyDropdownChange('prof')" required>
+                  <option value="USD">USD - US Dollar ($)</option>
+                  <option value="INR">INR - Indian Rupee (₹)</option>
+                  <option value="EUR">EUR - Euro (€)</option>
+                  <option value="IDR">IDR - Indonesian Rupiah (Rp)</option>
+                  <option value="ZAR">ZAR - South African Rand (R)</option>
+                  <option value="OTHER">Other ISO Code...</option>
+                </select>
+                <input type="text" id="profHomeCurrencyCustom" class="form-input" placeholder="e.g. GBP" maxlength="3" style="display:none; margin-top: 0.35rem;" />
               </div>
               <div class="form-group">
                 <label class="form-label" for="profBalance">Current Available Balance</label>

@@ -36,8 +36,29 @@ _GLOBAL_FX: Optional[FXEngine] = None
 def get_fx_engine() -> FXEngine:
     global _GLOBAL_FX
     if _GLOBAL_FX is None:
+        import csv
+        from pathlib import Path
         engine = FXEngine()
-        # Seed standard development FX pairs if empty
+
+        # 1. Load authoritative exchange rates dataset if present
+        csv_path = Path(__file__).resolve().parent.parent.parent / "dataset" / "exchange_rates.csv"
+        if csv_path.exists():
+            try:
+                with open(csv_path, mode="r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        d = date.fromisoformat(row["rate_date"].strip())
+                        from_c = row["from_currency"].strip().upper()
+                        to_c = row["to_currency"].strip().upper()
+                        rate = Decimal(row["rate"].strip())
+                        engine.add_rate(d, from_c, to_c, rate)
+                        if rate != Decimal("0"):
+                            reciprocal = (Decimal("1") / rate).quantize(Decimal("0.00000001"))
+                            engine.add_rate(d, to_c, from_c, reciprocal)
+            except Exception as e:
+                logger.warning(f"Could not load dataset/exchange_rates.csv: {e}")
+
+        # 2. Seed development baseline rates (preserves test suite compatibility)
         ref_dt = date(2026, 3, 1)
         engine.add_rate(ref_dt, "EUR", "USD", Decimal("1.1000"))
         engine.add_rate(ref_dt, "GBP", "USD", Decimal("1.2500"))

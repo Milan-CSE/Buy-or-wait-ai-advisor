@@ -30,6 +30,16 @@ class GroundedExplanationSchema(BaseModel):
     suggested_action: str
 
 
+class FXMetadataSchema(BaseModel):
+    purchase_currency: str
+    home_currency: str
+    exchange_rate: Decimal
+    exchange_rate_date: date
+    is_estimated: bool
+    source: str
+    converted_amount_home: Decimal
+
+
 class PurchaseEvaluationResponse(BaseModel):
     decision_id: str
     purchase_request_id: str
@@ -44,6 +54,7 @@ class PurchaseEvaluationResponse(BaseModel):
     risk_tier: str
     risk_assessment: Optional[RiskAssessmentSchema] = None
     grounded_explanation: Optional[GroundedExplanationSchema] = None
+    fx_metadata: Optional[FXMetadataSchema] = None
     engine_version: str
     calibration_version: str
     created_at: datetime

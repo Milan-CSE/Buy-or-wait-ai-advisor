@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.api.dependencies import get_current_user, get_db, get_decision_service
 from backend.api.schemas.purchase import PurchaseEvaluationRequest
 from backend.api.schemas.decision import (
+    FXMetadataSchema,
     GroundedExplanationSchema,
     PurchaseEvaluationResponse,
     RiskAssessmentSchema,
@@ -130,12 +131,29 @@ def evaluate_purchase(
             p90_breach_detected=dec.risk_assessment.p90_breach_detected,
         )
 
+    fx_schema = None
+    if result.fx_metadata:
+        from decimal import Decimal
+        from datetime import date as dt_date
+        raw_dt = result.fx_metadata["exchange_rate_date"]
+        parsed_dt = dt_date.fromisoformat(raw_dt) if isinstance(raw_dt, str) else raw_dt
+        fx_schema = FXMetadataSchema(
+            purchase_currency=result.fx_metadata["purchase_currency"],
+            home_currency=result.fx_metadata["home_currency"],
+            exchange_rate=Decimal(str(result.fx_metadata["exchange_rate"])),
+            exchange_rate_date=parsed_dt,
+            is_estimated=bool(result.fx_metadata["is_estimated"]),
+            source=str(result.fx_metadata["source"]),
+            converted_amount_home=Decimal(str(result.fx_metadata["converted_amount_home"])),
+        )
+
     # Generate Grounded Explanation
     grounded_exp = ExplanationService.explain_decision(
         decision=dec,
         requested_amount=body.requested_amount,
         currency=body.currency,
         minimum_balance=None,
+        fx_metadata=result.fx_metadata,
     )
     grounded_schema = GroundedExplanationSchema(
         headline=grounded_exp.headline,
@@ -159,6 +177,7 @@ def evaluate_purchase(
         risk_tier=dec.risk_assessment.risk_tier if dec.risk_assessment else "LOW_RISK",
         risk_assessment=risk_schema,
         grounded_explanation=grounded_schema,
+        fx_metadata=fx_schema,
         engine_version=rec.engine_version,
         calibration_version=rec.calibration_version,
         created_at=rec.created_at,
