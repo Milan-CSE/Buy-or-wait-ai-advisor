@@ -56,4 +56,7 @@ HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
 # Start hardened uvicorn server
-CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]
+COPY --chown=appuser:appgroup start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+CMD ["/app/start.sh"]
