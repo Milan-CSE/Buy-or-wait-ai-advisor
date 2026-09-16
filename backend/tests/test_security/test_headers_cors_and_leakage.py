@@ -84,6 +84,19 @@ class TestHeadersCorsAndLeakage(unittest.TestCase):
         self.assertNotIn("SELECT", body)
         self.assertNotIn("password_hash", body)
 
+    # 22. Documentation routes CSP permits CDN assets for Swagger UI and ReDoc
+    def test_22_docs_csp_allows_swagger_ui_cdn(self):
+        docs_res = self.client.get("/docs")
+        self.assertEqual(docs_res.status_code, 200)
+        docs_csp = docs_res.headers.get("Content-Security-Policy", "")
+        self.assertIn("https://cdn.jsdelivr.net", docs_csp)
+        self.assertIn("https://fastapi.tiangolo.com", docs_csp)
+
+        redoc_res = self.client.get("/redoc")
+        self.assertEqual(redoc_res.status_code, 200)
+        redoc_csp = redoc_res.headers.get("Content-Security-Policy", "")
+        self.assertIn("https://cdn.jsdelivr.net", redoc_csp)
+
 
 if __name__ == "__main__":
     unittest.main()

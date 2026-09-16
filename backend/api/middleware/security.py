@@ -18,10 +18,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-        # Content Security Policy: Strict for APIs, self-hosted for frontend and docs
+        # Content Security Policy: Strict for APIs, CDN-enabled for docs, self-hosted for frontend
         path = request.url.path
         if path.startswith("/api/"):
             response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        elif path in ("/docs", "/redoc", "/docs/oauth2-redirect"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com; "
+                "img-src 'self' data: https: https://fastapi.tiangolo.com; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'"
+            )
         else:
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
