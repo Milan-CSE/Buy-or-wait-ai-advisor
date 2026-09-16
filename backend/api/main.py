@@ -246,6 +246,25 @@ def create_app() -> FastAPI:
     app.include_router(purchases_router, prefix=settings.API_V1_STR)
     app.include_router(decisions_router, prefix=settings.API_V1_STR)
 
+    # 5. Static Assets and Web UI
+    import os
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    # Resolve static directory relative to this file or current working dir
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    static_dir = os.path.join(base_dir, "static")
+
+    if os.path.isdir(static_dir):
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_index():
+        index_path = os.path.join(static_dir, "index.html")
+        if os.path.isfile(index_path):
+            return FileResponse(index_path, media_type="text/html")
+        return {"message": "Buy or Wait? API is online. Frontend index.html not found."}
+
     return app
 
 

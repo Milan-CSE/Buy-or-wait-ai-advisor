@@ -18,7 +18,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
-        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        # Content Security Policy: Strict for APIs, self-hosted for frontend and docs
+        path = request.url.path
+        if path.startswith("/api/"):
+            response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: https:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'"
+            )
 
         # Cache-Control: no-store on sensitive financial endpoints
         path = request.url.path
